@@ -1,6 +1,6 @@
 // Used to define a dynamically sized (at runtime) dimension
-type Var<N extends string> = number & { label: N };
-const Var = <L extends string>(d: number, label: L) => { return d as Var<L> };
+export type Var<N extends string> = number & { label: N };
+export const Var = <L extends string>(d: number, label: L) => { return d as Var<L> };
 
 // Used to ensure that there's not ambiguity that worms its way through the type system via Union
 type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends ((k: infer I) => void) ? I : never;

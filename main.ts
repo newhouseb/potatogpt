@@ -1,4 +1,4 @@
-import { addMatrix, causalMask, copy, gelu, getSlice, layerNorm, linear, mapInPlace, merge, multiplyMatrix, softmax, split, tensor, transposeMatrix, unsqueeze } from "./math";
+import { Var, addMatrix, causalMask, copy, gelu, getSlice, layerNorm, linear, mapInPlace, merge, multiplyMatrix, softmax, split, tensor, transposeMatrix, unsqueeze } from "./math";
 import * as fs from 'fs';
 import { inflate } from 'zlib';
 import { decode } from '@msgpack/msgpack';
@@ -125,10 +125,7 @@ async function main() {
 
   const gpt = await loadSmallGPT();
 
-  const inputs = tensor([gpt.SequenceLength, gpt.EmbeddingDimensions])
-
-  // Fake truncate things
-  inputs.shape = [tokens.length as any, gpt.EmbeddingDimensions]
+  const inputs = tensor([Var(tokens.length, 'Sequence Length'), gpt.EmbeddingDimensions])
 
   // Map each token into an embedding + position vector
   tokens.map((token, i) => {
@@ -183,10 +180,10 @@ async function main() {
     console.log("Splitting out k, q, and v tensors");
 
     // Next split out each of the heads
-    const kHeads = split(k, gpt.EmbeddingDimensions / gpt.AttentionHeads as 64);
-    const qHeads = split(q, gpt.EmbeddingDimensions / gpt.AttentionHeads as 64);
-    const vHeads = split(v, gpt.EmbeddingDimensions / gpt.AttentionHeads as 64);
-    const aHeads = [] as Tensor<readonly [typeof gpt.SequenceLength, 64]>[];
+    const kHeads = split(k, Var(gpt.EmbeddingDimensions / gpt.AttentionHeads, 'Head Width'));
+    const qHeads = split(q, Var(gpt.EmbeddingDimensions / gpt.AttentionHeads, 'Head Width'));
+    const vHeads = split(v, Var(gpt.EmbeddingDimensions / gpt.AttentionHeads, 'Head Width'));
+    const aHeads = [] as Tensor<readonly [Var<'Sequence Length'>, Var<'Head Width'>]>[];
 
     console.log("Performing self-attention");
 
