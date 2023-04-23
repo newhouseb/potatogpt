@@ -45,7 +45,7 @@ Another challenge is that you might have a dynamically sized tensor (i.e. based 
 
 In this example, the first dimension of tensorA is only known at runtime. But because we can tag it as `Var<'Sequence Length'>`, all future uses will typecheck just as they would above: if you tried to intermingle differently branded numbers, typescript would yell.
 
-
+PotatoGPT uses fully type-safe tensors everywhere.
 
 ## FAQ
 
@@ -56,3 +56,7 @@ I've written an autodifferentiating compiler in clojure years ago so I have a pr
 ### How were the weights generated?
 
 The weights were generated using the python notebook found in this repository. I spent a while trying to figure out if I could read the raw tensorflow checkpoints but doing so without third party libraries is tough. Tensorflow stores weights in a vaguely LevelDB-like SSTable format "for efficiency" but after reading a bunch of enterprise-grade Google C++, I decided to just write each tensor to disk in a structured format. This ended up being smaller than the "optimized" tensorflow checkpoint format and way faster to load than anything else I tried ¯\_(ツ)_/¯
+
+### Can we make Tensorflow or PyTorch typesafe?
+
+I'm not sure! Python looks to have generic types, but without conditional types it is tricky to have any meaningful dynamic behavior. I would love to be proven wrong here.
