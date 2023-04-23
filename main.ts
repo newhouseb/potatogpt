@@ -99,8 +99,6 @@ function decodeTokens(tokens: number[]) {
 const loadSmallGPT = async () => {
   const gpt = await readCompressedMsgpack<any>('gpt2sm.msgpack.zlib');
 
-  console.log('loaded weights')
-
   const model = GPT({
     VocabularySize: 50257, 
     SequenceLength: 1024, 
@@ -112,171 +110,114 @@ const loadSmallGPT = async () => {
   return model;
 }
 
+type Multiply<A extends number, B extends number> = number & { label: `${A} * ${B}` }
+type Divide<A extends number, B extends number> = number & { label: `${A} / ${B}` }
+
+const Divide = <A extends number, B extends number>(a: A, b: B) => a / b as Divide<A, B>;
+
+
 async function main() {
   let prompt = 'peanut butter and';
-
   let tokens = encodeString(prompt)
 
-  console.log(tokens)
-
-  console.log(decodeTokens(tokens));
-
   console.log('loading gpt')
-
   const gpt = await loadSmallGPT();
+  console.log('done')
 
-  const inputs = tensor([Var(tokens.length, 'Sequence Length'), gpt.EmbeddingDimensions])
+  let toGenerate = 100;
 
-  // Map each token into an embedding + position vector
-  tokens.map((token, i) => {
-    console.log('mapping token', i)
-    const slice = getSlice(inputs, i)
-    console.log('out')
-    const embedding = getSlice(gpt.weights.wte, token);
-    console.log('embedding')
-    const position = getSlice(gpt.weights.wpe, i);
-    console.log('position')
-    copy({ from: 
-      addMatrix(embedding, position), 
-      to: slice})
-  })
+  while (toGenerate > 0) {
+    let x = tensor([Var(tokens.length, 'Sequence Length'), gpt.EmbeddingDimensions])
 
-  console.log('A', inputs.data[0], inputs.data[768]);
+    // Map each token into an embedding + position vector
+    tokens.map((token, i) => {
+      const slice = getSlice(x, i)
+      const embedding = getSlice(gpt.weights.wte, token);
+      const position = getSlice(gpt.weights.wpe, i);
+      copy({ from: 
+        addMatrix(embedding, position), 
+        to: slice})
+    })
 
-  // Normalize the embeddings & position
-  let x = inputs //layerNorm(inputs, gpt.weights.ln_f.g, gpt.weights.ln_f.b)
+    let i = 0;
+    for (const block of gpt.weights.blocks) {
+      i += 1
+      process.stdout.write('\rBlock ' + i + ' of ' + gpt.weights.blocks.length);
 
-  console.log('B', x.data[0], inputs.data[768]);
+      const nx1 = layerNorm(x, block.ln_1.g, block.ln_1.b)
 
-  let i = 0;
-  for (const block of gpt.weights.blocks) {
-    console.log("Starting block", i);
-    i += 1
+      // We weight the inputs to self attention 
+      const kqv = linear(nx1, block.attn.c_attn.w, block.attn.c_attn.b)
 
+      // Split out the k, q, and v tensors
+      const [q, k, v] = split(kqv, gpt.EmbeddingDimensions);
 
+      // Next split out each of the heads
+      const headWidth = Divide(gpt.EmbeddingDimensions, gpt.AttentionHeads);
+      const kHeads = split(k, headWidth);
+      const qHeads = split(q, headWidth);
+      const vHeads = split(v, headWidth);
+      const aHeads = [] as Tensor<readonly [Var<'Sequence Length'>, typeof headWidth]>[];
 
-    /**
-     * Self Attention
-     */
+      // Perform (masked) self-attention for each head
+      const sqrtD = Math.sqrt(gpt.EmbeddingDimensions / gpt.AttentionHeads);
+      const mask = causalMask(kHeads[0].shape[0]);
+      for (let h = 0; h < gpt.AttentionHeads; h++) {
+        const inner = addMatrix(
+              mapInPlace(
+                multiplyMatrix(qHeads[h], transposeMatrix(kHeads[h])), 
+                (n) => n / sqrtD), 
+              mask);
+        const smax = softmax(inner);
+        const outer = multiplyMatrix(
+          smax, 
+          vHeads[h]);
+        aHeads.push(outer);
+      }
 
-    const nx1 = layerNorm(x, block.ln_1.g, block.ln_1.b)
+      // Next merge the heads all back together
+      const a = merge(aHeads, gpt.EmbeddingDimensions);
 
-    console.log(i, 'C', nx1.data[0], nx1.data[768]);
+      // Project the attention back into the embedding space and add to our residuals
+      x = addMatrix(x, linear(a, block.attn.c_proj.w, block.attn.c_proj.b))
 
-    console.log("First layer norm");
+      /**
+       * Fully Connected Layer
+       */
 
-    // We weight the inputs to self attention (the non-inferred type is 3*embedding)
-    const kqv = linear(nx1, block.attn.c_attn.w, block.attn.c_attn.b)
+      // Do our second layer norm
+      const nx2 = layerNorm(x, block.ln_2.g, block.ln_2.b)
 
-    console.log(i, 'D', kqv.data[0], kqv.data[768]);
+      // Project up to 4x wide, run gelu activate, project back down
+      x = addMatrix(x, linear(gelu(linear(nx2, block.mlp.c_fc.w, block.mlp.c_fc.b)), block.mlp.c_proj.w, block.mlp.c_proj.b))
 
-    console.log("Weighing self attestation");
-
-    // Split out the k, q, and v tensors
-    const [q, k, v] = split(kqv, gpt.EmbeddingDimensions);
-
-    console.log(i, 'E', q.data[0], k.data[0], v.data[0]);
-
-    console.log("Splitting out k, q, and v tensors");
-
-    // Next split out each of the heads
-    const kHeads = split(k, Var(gpt.EmbeddingDimensions / gpt.AttentionHeads, 'Head Width'));
-    const qHeads = split(q, Var(gpt.EmbeddingDimensions / gpt.AttentionHeads, 'Head Width'));
-    const vHeads = split(v, Var(gpt.EmbeddingDimensions / gpt.AttentionHeads, 'Head Width'));
-    const aHeads = [] as Tensor<readonly [Var<'Sequence Length'>, Var<'Head Width'>]>[];
-
-    console.log("Performing self-attention");
-
-    // Perform self-attention
-    const sqrtD = Math.sqrt(gpt.EmbeddingDimensions / gpt.AttentionHeads);
-
-    const mask = causalMask(kHeads[0].shape[0]);
-    for (let h = 0; h < gpt.AttentionHeads; h++) {
-      const inner = addMatrix(
-            mapInPlace(
-              multiplyMatrix(qHeads[h], transposeMatrix(kHeads[h])), 
-              (n) => n / sqrtD), 
-            mask);
-
-      console.log('attention inner', inner.data[0])
-
-      const smax = softmax(inner);
-      console.log('smax', smax.data[0], smax.shape);
-
-      const outer = multiplyMatrix(
-        smax, 
-        vHeads[h]);
-
-      console.log('attention outer', outer.data[0])
-
-      aHeads.push(outer);
+      process.stdout.write('\rBlock done                     ');
     }
 
-    console.log("Merge heads")
+    // Do the final layer norm
+    x = layerNorm(x, gpt.weights.ln_f.g, gpt.weights.ln_f.b);
+    const transposed = transposeMatrix(gpt.weights.wte)
+    const final = multiplyMatrix(x, transposed);
+    const outTokens = [] as number[];
 
-    // Next merge the heads all back together
-    const a = merge(aHeads, gpt.EmbeddingDimensions);
+    let logits = getSlice(final, final.shape[0] - 1);
 
-    console.log(i, 'F', a.data[0], a.data[768]);
-
-    console.log("Project attention")
-
-    // Project the attention back into the embedding space and add to our residuals
-    x = addMatrix(x, linear(a, block.attn.c_proj.w, block.attn.c_proj.b))
-
-    console.log(i, 'G', x.data[0], x.data[768]);
-
-    /**
-     * Fully Connected Layer
-     */
-
-    console.log("Second layer norm")
-  
-    // Do our second layer norm
-    const nx2 = layerNorm(x, block.ln_2.g, block.ln_2.b)
-
-    console.log(i, 'H', nx2.data[0]);
-    console.log("MLP")
-
-    // Project up to 4x wide, run gelu activate, project back down
-    x = addMatrix(x, linear(gelu(linear(nx2, block.mlp.c_fc.w, block.mlp.c_fc.b)), block.mlp.c_proj.w, block.mlp.c_proj.b))
-
-    console.log(i, 'I', x.data[0], x.data[768]);
-
-    console.log("Done with block")
-  }
-
-  console.log("Final layer norm", x.data[0]);
-
-  // Do the final layer norm
-  x = layerNorm(x, gpt.weights.ln_f.g, gpt.weights.ln_f.b);
-
-  console.log("Back to tokens", x.data[0])
-
-  const transposed = transposeMatrix(gpt.weights.wte)
-
-  const final = multiplyMatrix(x, transposed);
-  console.log('Final', final.data[0], final.data[50257])
-
-  console.log("Argmax overlogits")
-  const outTokens = [] as number[];
-
-  let logits = getSlice(final, final.shape[0] - 1);
-  console.log(logits.shape);
-  console.log(i, logits.data[0])
-
-  // argmax over the logits
-  let bestToken = 0;
-  let bestScore = -Infinity;
-  for (let j = 0; j < logits.data.length; j++) {
-    if (logits.data[j] > bestScore) {
-      bestScore = logits.data[j];
-      bestToken = j;
+    // argmax over the logits
+    let bestToken = 0;
+    let bestScore = -Infinity;
+    for (let j = 0; j < logits.data.length; j++) {
+      if (logits.data[j] > bestScore) {
+        bestScore = logits.data[j];
+        bestToken = j;
+      }
     }
-  }
-  outTokens.push(bestToken);
 
-  console.log('Chosen token:', [prompt, decodeTokens(outTokens)]);
+    console.log('\nChosen token:', [prompt, decodeTokens([bestToken])]);
+    prompt += '' + decodeTokens([bestToken]);
+    tokens.push(bestToken);
+
+    toGenerate -= 1;
+  }
 }
 main();
 
@@ -311,13 +252,6 @@ function convertNestedListToFloat32Array(nestedList: NestedList) {
   flattenToFloat32ArrayRecursively(nestedList, float32Array);
   return float32Array;
 }
-
-// Example usage
-const nestedList = [[[1, 2, 3, 4], [5, 6, 7, 8]]];
-const float32Array = convertNestedListToFloat32Array(nestedList);
-console.log(float32Array);
-
-type Multiply<A extends number, B extends number> = number & { label: `${A} * ${B}` }
 
 function GPT<
     SequenceLength extends number, 
@@ -369,9 +303,6 @@ function GPT<
       g: Tensor<[EmbeddingDimensions]>
     },
   };
-
-  console.log('wte', weights.wte.length, weights.wte[0].length)
-
 
     return {
         ...params,
