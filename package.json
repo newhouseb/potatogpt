@@ -10,8 +10,5 @@
     "test": "jest",
     "test:watch": "jest --watchAll",
     "start": "ts-node main.ts"
-  },
-  "dependencies": {
-    "@msgpack/msgpack": "^3.0.0-beta2"
   }
 }
