@@ -1,33 +1,6 @@
 import { Var, addMatrix, causalMask, copy, gelu, getSlice, layerNorm, linear, mapInPlace, merge, multiplyMatrix, softmax, split, tensor, transposeMatrix, unsqueeze } from "./math";
 import * as fs from 'fs';
-import { inflate } from 'zlib';
-import { decode } from '@msgpack/msgpack';
 import type { Tensor } from "./math";
-
-function readCompressedMsgpack<T>(filePath: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    fs.readFile(filePath, (err, compressedData) => {
-      if (err) {
-        reject(err);
-      } else {
-        // Decompress the data using Node's built-in zlib
-        inflate(compressedData, (err, decompressedData) => {
-          if (err) {
-            reject(err);
-          } else {
-            try {
-              // Deserialize the data using @msgpack/msgpack
-              const obj = decode(decompressedData) as T;
-              resolve(obj);
-            } catch (e) {
-              reject(e);
-            }
-          }
-        });
-      }
-    });
-  });
-}
 
 function bytesToUnicode(): [{ [key: number]: string }, { [key: string]: number }] {
   const bs: number[] = [
@@ -97,7 +70,8 @@ function decodeTokens(tokens: number[]) {
 }
 
 const loadSmallGPT = async () => {
-  const gpt = await readCompressedMsgpack<any>('gpt2sm.msgpack.zlib');
+  //const gpt = await readCompressedMsgpack<any>('gpt2sm.msgpack.zlib');
+  //const gpt = await readCompressed<any>('gpt2sm.json.zlib');
 
   const model = GPT({
     VocabularySize: 50257, 
@@ -105,16 +79,15 @@ const loadSmallGPT = async () => {
     EmbeddingDimensions: 768, 
     AttentionHeads: 12, 
     Layers: 12
-  }, gpt)
+  }, null)
   
   return model;
 }
 
 type Multiply<A extends number, B extends number> = number & { label: `${A} * ${B}` }
+const Multiply = <A extends number, B extends number>(a: A, b: B) => a * b as Multiply<A, B>;
 type Divide<A extends number, B extends number> = number & { label: `${A} / ${B}` }
-
 const Divide = <A extends number, B extends number>(a: A, b: B) => a / b as Divide<A, B>;
-
 
 async function main() {
   let prompt = 'peanut butter and';
@@ -181,10 +154,6 @@ async function main() {
       // Project the attention back into the embedding space and add to our residuals
       x = addMatrix(x, linear(a, block.attn.c_proj.w, block.attn.c_proj.b))
 
-      /**
-       * Fully Connected Layer
-       */
-
       // Do our second layer norm
       const nx2 = layerNorm(x, block.ln_2.g, block.ln_2.b)
 
@@ -198,7 +167,6 @@ async function main() {
     x = layerNorm(x, gpt.weights.ln_f.g, gpt.weights.ln_f.b);
     const transposed = transposeMatrix(gpt.weights.wte)
     const final = multiplyMatrix(x, transposed);
-    const outTokens = [] as number[];
 
     let logits = getSlice(final, final.shape[0] - 1);
 
@@ -221,38 +189,6 @@ async function main() {
 }
 main();
 
-type NestedList = (number | NestedList)[];
-
-function countNestedElements(nestedList: NestedList) {
-  let count = 0;
-  for (const item of nestedList) {
-    if (Array.isArray(item)) {
-      count += countNestedElements(item);
-    } else {
-      count++;
-    }
-  }
-  return count;
-}
-
-function flattenToFloat32ArrayRecursively(nestedList: NestedList, outputArray: Float32Array, index = 0) {
-  for (const item of nestedList) {
-    if (Array.isArray(item)) {
-      index = flattenToFloat32ArrayRecursively(item, outputArray, index);
-    } else {
-      outputArray[index++] = item;
-    }
-  }
-  return index;
-}
-
-function convertNestedListToFloat32Array(nestedList: NestedList) {
-  const totalElements = countNestedElements(nestedList);
-  const float32Array = new Float32Array(totalElements);
-  flattenToFloat32ArrayRecursively(nestedList, float32Array);
-  return float32Array;
-}
-
 function GPT<
     SequenceLength extends number, 
     VocabSize extends number,
@@ -267,94 +203,67 @@ function GPT<
         Layers: Layers,
     }, weights: any) {
 
-  type Block = {
-    attn: {
-      c_attn: {
-        // b and w stands for "bias" and "weight"
-        b: Tensor<[Multiply<3, EmbeddingDimensions>]>,
-        w: Tensor<[EmbeddingDimensions, Multiply<3, EmbeddingDimensions>]>
-      },
-      c_proj: {
-        b: Tensor<[EmbeddingDimensions]>,
-        w: Tensor<[EmbeddingDimensions, EmbeddingDimensions]>
-      }
-    },
-    // ln_1 stands for "layer normalization 1"
-    ln_1: {
-      // b and g stands for "bias" and "gain"
-      b: Tensor<[EmbeddingDimensions]>,
-      g: Tensor<[EmbeddingDimensions]>
-    },
-    // mlp stands for "multi-layer perceptron"
-    mlp: {
-      // c_fc stands for full connected
-      c_fc: {
-        b: Tensor<[Multiply<4, EmbeddingDimensions>]>
-        w: Tensor<[EmbeddingDimensions, Multiply<4, EmbeddingDimensions>]>
-      },
-      // c_proj stands for "projection"
-      c_proj: {
-        b: Tensor<[EmbeddingDimensions]>,
-        w: Tensor<[Multiply<4, EmbeddingDimensions>, EmbeddingDimensions]>
-      }
-    },
-    ln_2: {
-      b: Tensor<[EmbeddingDimensions]>,
-      g: Tensor<[EmbeddingDimensions]>
-    },
-  };
+  function load(path: string) {
+    // It appears that readFileSync reuses buffers without realizing that
+    // we've established views into them. So we need to copy the buffer.
+    const buffer = fs.readFileSync(path);
+    const newBuffer = new ArrayBuffer(buffer.length);
+    const toReturn = new Float32Array(newBuffer);
+    toReturn.set(new Float32Array(buffer.buffer, buffer.byteOffset, buffer.length / 4));
+    return toReturn;
+  } 
 
     return {
         ...params,
         weights: {
             // wpe stands for "word position embedding"
-            wpe: tensor([params.SequenceLength, params.EmbeddingDimensions], convertNestedListToFloat32Array(weights.wpe) as any),
+            wpe: tensor([params.SequenceLength, params.EmbeddingDimensions], load('weights/wpe') as any),
             // wte stands for "word token embedding"
-            wte: tensor([params.VocabularySize, params.EmbeddingDimensions], convertNestedListToFloat32Array(weights.wte) as any),
+            wte: tensor([params.VocabularySize, params.EmbeddingDimensions], load('weights/wte') as any),
             // ln_f stands for "layer normalization for the feedforward network"
             ln_f: {
-                b: tensor([params.EmbeddingDimensions], convertNestedListToFloat32Array(weights.ln_f.b) as any),
-                g: tensor([params.EmbeddingDimensions], convertNestedListToFloat32Array(weights.ln_f.g) as any)
+                b: tensor([params.EmbeddingDimensions], load('weights/ln_f_b') as any),
+                g: tensor([params.EmbeddingDimensions], load('weights/ln_f_g') as any)
             },
-            blocks: weights.blocks.map((b: any) =>
+            blocks: [...Array(params.Layers).keys()].map((i: number) =>
                 ({
                     attn: {
                         c_attn: {
                             // b and w stands for "bias" and "weight"
-                            b: tensor([params.EmbeddingDimensions*3] as const, convertNestedListToFloat32Array(b.attn.c_attn.b) as any),
-                            w: tensor([params.EmbeddingDimensions, params.EmbeddingDimensions*3] as const, convertNestedListToFloat32Array(b.attn.c_attn.w) as any)
+                            b: tensor([Multiply(3, params.EmbeddingDimensions)] as const, load(`weights/blocks_${i}_attn_c_attn_b`) as any),
+                            w: tensor([params.EmbeddingDimensions, Multiply(3, params.EmbeddingDimensions)] as const, load(`weights/blocks_${i}_attn_c_attn_w`) as any)
                         },
                         c_proj: {
-                            b: tensor([params.EmbeddingDimensions] as const, convertNestedListToFloat32Array(b.attn.c_proj.b) as any),
-                            w: tensor([params.EmbeddingDimensions, params.EmbeddingDimensions] as const, convertNestedListToFloat32Array(b.attn.c_proj.w) as any)
+                            b: tensor([params.EmbeddingDimensions] as const, load(`weights/blocks_${i}_attn_c_proj_b`) as any),
+                            w: tensor([params.EmbeddingDimensions, params.EmbeddingDimensions] as const, load(`weights/blocks_${i}_attn_c_proj_w`) as any)
                         }
                     },
                     // ln_1 stands for "layer normalization 1"
                     ln_1: { 
                         // b and g stands for "bias" and "gain"
-                        b: tensor([params.EmbeddingDimensions] as const, convertNestedListToFloat32Array(b.ln_1.b) as any), 
-                        g: tensor([params.EmbeddingDimensions] as const, convertNestedListToFloat32Array(b.ln_1.g) as any)
+                        b: tensor([params.EmbeddingDimensions] as const, load(`weights/blocks_${i}_ln_1_b`) as any), 
+                        g: tensor([params.EmbeddingDimensions] as const, load(`weights/blocks_${i}_ln_1_g`) as any)
                     },
                     // mlp stands for "multi-layer perceptron"
                     mlp: {
                         // c_fc stands for full connected
                         c_fc: {
-                            b: tensor([params.EmbeddingDimensions*4] as const, convertNestedListToFloat32Array(b.mlp.c_fc.b) as any),
-                            w: tensor([params.EmbeddingDimensions, params.EmbeddingDimensions*4] as const, convertNestedListToFloat32Array(b.mlp.c_fc.w) as any)
+                            b: tensor([Multiply(4, params.EmbeddingDimensions)] as const, load(`weights/blocks_${i}_mlp_c_fc_b`) as any),
+                            w: tensor([params.EmbeddingDimensions, Multiply(4, params.EmbeddingDimensions)] as const, load(`weights/blocks_${i}_mlp_c_fc_w`) as any)
                         },
                         // c_proj stands for "projection"
                         c_proj: {
-                            b: tensor([params.EmbeddingDimensions] as const, convertNestedListToFloat32Array(b.mlp.c_proj.b) as any),
-                            w: tensor([params.EmbeddingDimensions*4, params.EmbeddingDimensions] as const, convertNestedListToFloat32Array(b.mlp.c_proj.w) as any)
+                            b: tensor([params.EmbeddingDimensions] as const, load(`weights/blocks_${i}_mlp_c_proj_b`) as any),
+                            w: tensor([Multiply(4, params.EmbeddingDimensions), params.EmbeddingDimensions] as const, load(`weights/blocks_${i}_mlp_c_proj_w`) as any)
                         }
                     },
                     // ln_2 stands for "layer normalization 2"
                     ln_2: { 
                         // b and g stands for "bias" and "gain"
-                        b: tensor([params.EmbeddingDimensions] as const, convertNestedListToFloat32Array(b.ln_2.b) as any), 
-                        g: tensor([params.EmbeddingDimensions] as const, convertNestedListToFloat32Array(b.ln_2.g) as any) 
+                        b: tensor([params.EmbeddingDimensions] as const, load(`weights/blocks_${i}_ln_2_b`) as any), 
+                        g: tensor([params.EmbeddingDimensions] as const, load(`weights/blocks_${i}_ln_2_g`) as any) 
                     },
             })
-        ) as Block[]}
+        )}
     }
 }
