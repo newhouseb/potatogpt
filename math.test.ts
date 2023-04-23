@@ -1,8 +1,8 @@
-import { causalMask, emptyTensor, gelu, getSlice, layerNorm, linear, merge, multiplyMatrix, softmax, split, tensor, transposeMatrix } from "./math"
+import { causalMask, gelu, getSlice, layerNorm, linear, merge, multiplyMatrix, softmax, split, tensor, transposeMatrix } from "./math"
 
 //const out = multiplyMatrix(tensor1, tensor2);
 test('Multiplication', () => {
-    const left = tensor('fp32', [4, 3], [
+    const left = tensor([4, 3], [
         1, 2, 3,
         4, 0, 5,
         6, 7, 8,
@@ -11,7 +11,7 @@ test('Multiplication', () => {
 
     expect(left.data[2]).toBe(3)
 
-    const double = tensor('fp32', [3, 3], [
+    const double = tensor([3, 3], [
         2, 0, 0,
         0, 2, 0,
         0, 0, 2
@@ -24,7 +24,7 @@ test('Multiplication', () => {
 })
 
 test('Transpose', () => {
-    const a = tensor('fp32', [2, 3], [
+    const a = tensor([2, 3], [
         1, 2, 3,
         4, 5, 6
     ]);
@@ -37,7 +37,7 @@ test('Transpose', () => {
 })
 
 test('Split & Merge', () => {
-    const a = tensor('fp32', [2, 6], [
+    const a = tensor([2, 6], [
         1, 2, 3, 4, 5, 6,
         1, 2, 3, 4, 5, 6
     ])
@@ -74,19 +74,19 @@ test('Causual Maks', () => {
 })
 
 test('Linear', () => {
-    const a = tensor('fp32', [3, 3], [
+    const a = tensor([3, 3], [
         2, 0, 0,
         0, 2, 0,
         0, 0, 2
     ]);
 
-    const x = tensor('fp32', [3, 3], [
+    const x = tensor([3, 3], [
         1, 2, 3,
         4, 0, 5,
         6, 7, 8,
     ]);
 
-    const b = tensor('fp32', [3], [
+    const b = tensor([3], [
        1, 1, 1,
     ]);
 
@@ -98,28 +98,27 @@ test('Linear', () => {
 });
 
 test('Softmax', () => {
-    const a = tensor('fp32', [3, 3], [
-        2, 0, 0,
-        0, 2, 0,
-        0, 0, 2
+    const a = tensor([2, 2], [
+        2, 100,
+        -5, 0
     ]);
 
     const out = softmax(a)
 
-    expect([...out.data].reduce((a, b) => a + b, 0)).toBeCloseTo(1.0)
+    expect([...out.data].reduce((a, b) => a + b, 0)).toBeCloseTo(2.0)
 })
 
 test('Layer Norm', () => {
-    const activations = tensor('fp32', [2, 3], [
+    const activations = tensor([2, 3], [
         2, 2, 3, 
         -5, 0, 1
     ]);
 
-    const gain = tensor('fp32', [3], [
+    const gain = tensor([3], [
         1, 1, 1,
     ]);
 
-    const bias = tensor('fp32', [3], [
+    const bias = tensor([3], [
         0, 0, 0,
     ]);
 
@@ -128,7 +127,7 @@ test('Layer Norm', () => {
 })
 
 test('GELU', () => {
-    const activations = tensor('fp32', [3, 1], [
+    const activations = tensor([3, 1], [
         -1000, 0, 1000
     ]);
 
@@ -140,7 +139,7 @@ test('GELU', () => {
 })
 
 test("Slicing", () => {
-    const a = tensor('fp32', [2, 6, 1], [
+    const a = tensor([2, 6, 1], [
         1, 2, 3, 4, 5, 6,
         7, 8, 9, 10, 11, 12
     ])
@@ -157,18 +156,18 @@ test("Slicing", () => {
 
 })
 
-const tensor1 = emptyTensor('int8', [3, 2]);
-const tensor2 = emptyTensor('int8', [4, 5]);
+const tensor1 = tensor([3, 2]);
+const tensor2 = tensor([4, 5]);
 
 // @ts-expect-error
 const out = multiplyMatrix(tensor1, tensor2);
 
-const tensor3 = emptyTensor('int8', [3, 4]);
-const tensor4 = emptyTensor('int8', [4, 5]);
+const tensor3 = tensor([3, 4]);
+const tensor4 = tensor([4, 5]);
 
 const out2 = multiplyMatrix(tensor3, tensor4);
 
-const bias = emptyTensor('int8', [5]);
+const bias = tensor([5]);
 const add = linear(tensor3, tensor4, bias);
 
 const sliced = getSlice(bias, 0)

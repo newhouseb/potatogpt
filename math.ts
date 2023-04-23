@@ -1,87 +1,55 @@
-export type Precision = 'int8' | 'fp32';
+// Used to define a dynamically sized (at runtime) dimension
+type Var<N extends string> = number & { label: N };
+const Var = <L extends string>(d: number, label: L) => { return d as Var<L> };
 
-export type DimensionalArray<P extends Precision, D extends readonly number[]> = { 
-    data: Int8Array ,
-    precision: 'int8',
-    shape: D 
-} | {
-    data: Float32Array,
-    precision: 'fp32',
-    shape: D
-};
+// Used to ensure that there's not ambiguity that worms its way through the type system via Union
+type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends ((k: infer I) => void) ? I : never;
+type IsUnion<T> = [T] extends [UnionToIntersection<T>] ? false : true;
 
-type IsLiteralNumber<T> = T extends number ? (number extends T ? false : true) : false;
+// Utility types
+type And<A, B> = A extends true ? B extends true ? true : false : false;
+type Or<A, B> = A extends true ? true : B extends true ? true : false;
 
-type ArrayOfLiteralNumbersOrNever<T> = T extends ReadonlyArray<number>
-  ? { [K in keyof T]: IsLiteralNumber<T[K]> } extends { [K in keyof T]: true }
+// Check that there is a literal number or an intentionally defined variable
+type IsLiteralOrVar<T extends number | (string & number)> = And<IsUnion<T> extends true ? false : true,
+                        Or<number extends T ? false : T extends number ? true : false,
+                           T extends { label: string } & number ? true : false>>;
+
+// Returns the same type if every element satisfied IsLiteralOrVar
+type AsLiteralArray<T extends ReadonlyArray<number | ({ label: string } & number)>> = T extends ReadonlyArray<unknown>
+  ? { [K in keyof T]: IsLiteralOrVar<T[K]> } extends { [K in keyof T]: true }
     ? T
     : never
   : never;
 
-export function emptyTensor<P extends Precision, const D extends readonly number[]>(
-        p: P, 
-        d: D
-    ): D extends ArrayOfLiteralNumbersOrNever<D> ? DimensionalArray<P, D> : [never, "DimensionalArray shape must be a tuple of literal numbers"] {
-    if (p === 'int8') {
-        return {
-            data: new Int8Array(d.reduce((a, b) => a * b, 1)),
-            precision: p,
-            shape: d
-        } as any
-    }
-    if (p === 'fp32') {
-        return {
-            data: new Float32Array(d.reduce((a, b) => a * b, 1)),
-            precision: p,
-            shape: d
-        } as any
-    }
-    throw new Error('Invalid precision');
+type Dim = number | number & { label: string };
+export type Tensor<D extends readonly Dim[]> = {
+    data: Float32Array
+    shape: D
 }
 
-export function tensor<P extends Precision, const D extends readonly number[]>(
-        p: P, 
-        d: D,
-        init: number[]
-    ): D extends ArrayOfLiteralNumbersOrNever<D> ? DimensionalArray<P, D> : [never, "DimensionalArray shape must be a tuple of literal numbers"] {
-    if (p === 'int8') {
-        return {
-            data: new Int8Array(init),
-            precision: p,
-            shape: d
-        } as any
-    }
-    if (p === 'fp32') {
-        return {
-            data: new Float32Array(init),
-            precision: p,
-            shape: d
-        } as any
-    }
-    throw new Error('Invalid precision');
+export function tensor<const D extends readonly (number | number & { label: string })[]>(
+    d: D,
+    init?: number[]
+    ): D extends AsLiteralArray<D> ? Tensor<D> : [never, "Unlabeled dimension amidst", D] {
+    return {
+        data: new Float32Array(init || d.reduce((a, b) => a * b, 1) as any),
+        shape: d
+    } as any
 }
 
-type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends ((k: infer I) => void) ? I : never;
-type IsUnion<T> = [T] extends [UnionToIntersection<T>] ? false : true;
-type IsLiteral<T> = T extends number ? (number extends T ? false : true) : false;
-type AnyUnion<T> = { [K in keyof T]: [T[K]] extends [UnionToIntersection<T[K]>] ? false : true } extends { [K in keyof T]: false } ? false : true;
-
-function isDimensionArray(a: any): a is DimensionalArray<any, any> {
-    return a && a.data && a.precision && a.shape;
+function isTensor(a: any): a is Tensor<any> {
+    return a && a.data && a.shape;
 }
 
-type CheckDims<T, A> = AnyUnion<T> extends false ? A : [never, "Matrix dimensions did not typecheck"];
-
-export const multiplyMatrix = <P extends Precision, 
-    X extends number, Y extends number, Z extends number>(
-    a: CheckDims<[X, Y, Z], DimensionalArray<P, readonly [X, Y]>>,
-    b: DimensionalArray<P, readonly [Y, Z]>):
-    CheckDims<[X, Y, Z], DimensionalArray<P, readonly [X, Z]>> => {
-    if (!isDimensionArray(a)) {
-        throw new Error('Invalid parameters');
+export function multiplyMatrix<const X extends Dim, const Y extends Dim, const Z extends Dim>(
+    a: IsUnion<Y> extends true ? [never, "Differing types", Y] : Tensor<readonly [X, Y]>, 
+    b: Tensor<readonly [Y, Z]>): Tensor<readonly [X, Z]> {
+    if (!isTensor(a) || !isTensor(b)) {
+        throw new Error("Invalid tensor");
     }
-        
-    const output = emptyTensor<P, [X, Z]>(a.precision as P, [a.shape[0], b.shape[1]] as const as any) as DimensionalArray<P, [X, Z]>;
+
+    const output = tensor<[X, Z]>([(a as any).shape[0], b.shape[1]]) as Tensor<[X, Z]>;
 
     for (let i = 0; i < a.shape[0]; i++) {
         for (let j = 0; j < b.shape[1]; j++) {
@@ -94,12 +62,12 @@ export const multiplyMatrix = <P extends Precision,
     }
     
     return output as any;
-}; 
+}
 
-export const transposeMatrix = <P extends Precision, X extends number, Y extends number>
-        (a: DimensionalArray<P, readonly [X, Y]>): DimensionalArray<P, readonly [Y, X]> => {
+export const transposeMatrix = <X extends number, Y extends number>
+        (a: Tensor<readonly [X, Y]>): Tensor<readonly [Y, X]> => {
 
-    const output = emptyTensor<P, [Y, X]>(a.precision as P, [a.shape[1], a.shape[0]] as any) as DimensionalArray<P, [Y, X]>;
+    const output = tensor<[Y, X]>([a.shape[1], a.shape[0]] as any) as Tensor<[Y, X]>;
 
     for (let i = 0; i < a.shape[0]; i++) {
         for (let j = 0; j < a.shape[1]; j++) {
@@ -110,22 +78,21 @@ export const transposeMatrix = <P extends Precision, X extends number, Y extends
     return output;
 }; 
 
-export const unsqueeze = <P extends Precision, D extends readonly number[]>
-        (a: DimensionalArray<P, D>): DimensionalArray<P, PushHead<D, 1>> => {
+export const unsqueeze = <D extends readonly Dim[]>
+        (a: Tensor<D>): Tensor<PushHead<D, 1>> => {
     return {
         data: a.data,
-        precision: a.precision,
         shape: [1, ...a.shape] as any
     } as any;
 }
 
-export function mapInPlace<P extends Precision, D extends readonly number[]>(a: DimensionalArray<P, D>, fn: (n: number) => number): DimensionalArray<P, D> {
+export function mapInPlace<D extends readonly Dim[]>(a: Tensor<D>, fn: (n: number) => number): Tensor<D> {
     a.data.set(a.data.map(i => fn(i)))
     return a;
 }
 
-export function split<P extends Precision, D extends readonly number[], C extends number>
-    (a: DimensionalArray<P, D>, chunkSize: C): DimensionalArray<P, PushTail<PopTail<D>, C>>[] {
+export function split<D extends readonly Dim[], C extends number>
+    (a: Tensor<D>, chunkSize: C): Tensor<PushTail<PopTail<D>, C>>[] {
 
     // Splits the last dimension into N sized chunks.
     // The intuition for this method's implementation is easiest to understand if you visualize
@@ -143,10 +110,10 @@ export function split<P extends Precision, D extends readonly number[], C extend
     }
 
     // Setup the output chunks
-    const out = [] as DimensionalArray<P, PushTail<PopTail<D>, C>>[];
+    const out = [] as Tensor<PushTail<PopTail<D>, C>>[];
     const chunks = stride / chunkSize;
     for (let c = 0; c < chunks; c++) {
-        out.push(emptyTensor(a.precision, [...a.shape.slice(0, a.shape.length - 1), chunkSize]) as any);
+        out.push(tensor([...a.shape.slice(0, a.shape.length - 1), chunkSize]) as any);
     }
     const outOffsets = out.map(_ => 0);
     let sourceOffset = 0;
@@ -164,9 +131,9 @@ export function split<P extends Precision, D extends readonly number[], C extend
     return out;
 }
 
-export function merge<P extends Precision, D extends readonly number[], C extends number>
-    (a: DimensionalArray<P, D>[], mergedSize: C): DimensionalArray<P, PushTail<PopTail<D>, C>> {
-    const out: DimensionalArray<P, PushTail<PopTail<D>, C>> = emptyTensor(a[0].precision, [...a[0].shape.slice(0, a[0].shape.length - 1), mergedSize]) as any;
+export function merge<D extends readonly Dim[], C extends number>
+    (a: Tensor<D>[], mergedSize: C): Tensor<PushTail<PopTail<D>, C>> {
+    const out: Tensor<PushTail<PopTail<D>, C>> = tensor([...a[0].shape.slice(0, a[0].shape.length - 1), mergedSize]) as any;
 
     const chunk = a[0].shape[a[0].shape.length - 1];
     if (mergedSize % chunk !== 0 || mergedSize !== chunk * a.length) {
@@ -190,8 +157,8 @@ export function merge<P extends Precision, D extends readonly number[], C extend
     return out;
 }
 
-export function causalMask<N extends number>(n: N): DimensionalArray<'fp32', [N, N]> {
-  const empty: DimensionalArray<'fp32', [N, N]> = emptyTensor('fp32', [n,n]) as any;
+export function causalMask<N extends Dim>(n: N): Tensor<[N, N]> {
+  const empty: Tensor<[N, N]> = tensor([n,n]) as any;
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
       empty.data[i*n + j] = j > i ? -1e10 : 0;
@@ -200,11 +167,11 @@ export function causalMask<N extends number>(n: N): DimensionalArray<'fp32', [N,
   return empty;
 }
 
-export function addMatrix<P extends Precision, D extends readonly number[]>(a: DimensionalArray<P, D>, b: DimensionalArray<P, D>): DimensionalArray<P, D> {
+export function addMatrix<D extends readonly Dim[]>(a: Tensor<D>, b: Tensor<D>): Tensor<D> {
     const data = a.data.map((x, i) => a.data[i] + b.data[i]);
     return {
         ...a, data
-    } as DimensionalArray<P, D>
+    } as Tensor<D>
 }
 
 export type Last<T extends readonly number[]> = ConstTuple<T> extends readonly [...readonly number[], infer V] ? V extends  number ? V : never : never;
@@ -217,42 +184,29 @@ export type PushHead<T extends readonly number[], A extends number> = [A, ...T]
 type ConstTuple<T extends readonly number[]> = T;
 
 
-export function getSlice<P extends Precision, const D extends readonly number[]>(a: DimensionalArray<P, D>, idx: number): 
-    DimensionalArray<P, Tail<D>> {
-
+export function getSlice<const D extends readonly Dim[]>(a: Tensor<D>, idx: number): 
+    Tensor<Tail<D>> {
     const stride = a.shape.slice(1).reduce((a, b) => a * b, 1);
-    
-    if (a.precision === 'int8') {
-        return {
-            data: new Int8Array(a.data.buffer, idx * stride, stride),
-            precision: a.precision,
-            shape: a.shape.slice(1) as Tail<D>,
-        }
+    return {
+        data: new Float32Array(a.data.buffer, 4 * idx * stride, stride),
+        shape: a.shape.slice(1) as Tail<D>,
     }
-    if (a.precision === 'fp32') {
-        //console.log(idx, stride, a.data.buffer.byteLength)
-        return {
-            data: new Float32Array(a.data.buffer, 4 * idx * stride, stride),
-            precision: a.precision,
-            shape: a.shape.slice(1) as Tail<D>,
-        }
-    }
-    throw new Error('Invalid precision');
 }
 
 
-export function copy<P extends Precision, D extends readonly number[]>(params: {from: DimensionalArray<P, D>, to: DimensionalArray<P, D>}) {
+export function copy<D extends readonly Dim[]>(params: {from: Tensor<D>, to: Tensor<D>}) {
     params.to.data.set(params.from.data)
 }
 
-export function linear<P extends Precision, X extends number, Y extends number, Z extends number>(
-    activations: CheckDims<[X, Y, Z], DimensionalArray<P, readonly [X, Y]>>, 
-    weights: DimensionalArray<P, readonly [Y, Z]>, 
-    bias: DimensionalArray<P, readonly [Z]>): DimensionalArray<P, readonly [X, Z]> {
-    if (!isDimensionArray(activations)) {
+export function linear<X extends Dim, Y extends Dim, Z extends Dim>(
+    activations: IsUnion<Y> extends true ? [never, "Ambiguous dimension", Y] : Tensor<readonly [X, Y]>, 
+    weights: IsUnion<Z> extends true ? [never, "Ambiguous dimension", Z] : Tensor<readonly [Y, Z]>, 
+    bias: Tensor<readonly [Z]>): Tensor<readonly [X, Z]> {
+    if (!isTensor(activations) || !isTensor(weights) || !isTensor(bias)) {
         throw new Error('Invalid parameters');
     }
-    const intermediate = multiplyMatrix(activations, weights) as DimensionalArray<P, readonly [X, Z]>
+
+    const intermediate = multiplyMatrix(activations as any, weights) as Tensor<readonly [X, Z]>
 
     for (let i = 0; i < intermediate.shape[0]; i++) {
         const s = getSlice(intermediate, i);
@@ -262,22 +216,18 @@ export function linear<P extends Precision, X extends number, Y extends number, 
     return intermediate;
 }
 
-export function gelu<P extends Precision, D extends readonly number[]>(a: DimensionalArray<P, D>): DimensionalArray<P, D> {
+export function gelu<D extends readonly Dim[]>(a: Tensor<D>): Tensor<D> {
     return {
-        precision: a.precision,
         shape: a.shape,
         data: a.data.map(x => 0.5 * x * (1 + Math.tanh(Math.sqrt(2 / Math.PI) * (x + 0.044715 * Math.pow(x,3)))))
-    } as DimensionalArray<P, D>
+    } as Tensor<D>
 }
 
-export function softmax<P extends Precision, D extends readonly number[]>(a: DimensionalArray<P, D>): DimensionalArray<P, D> {
+export function softmax<D extends readonly Dim[]>(a: Tensor<D>): Tensor<D> {
     const lastStride = a.shape[a.shape.length - 1];
     const elementCount = a.data.length / lastStride;
     for (let i = 0; i < elementCount; i++) {
-        const layer = a.precision === 'int8' ? 
-            new Int8Array(a.data.buffer, i * lastStride, lastStride) : 
-            new Float32Array(a.data.buffer, 4 * i * lastStride, lastStride);
-
+        const layer = new Float32Array(a.data.buffer, 4 * i * lastStride, lastStride);
         const max = (layer as any).reduce((a: number, b: number) => Math.max(a, b), -Infinity);
         const exp_x = layer.map(x => Math.exp(x - max));
         const sum_exp_x = (exp_x as any).reduce((a: number, b: number) => a + b, 0);
@@ -286,32 +236,21 @@ export function softmax<P extends Precision, D extends readonly number[]>(a: Dim
     }
 
     return a;
-    
-    /*
-    return {
-        ...a, data
-    } as DimensionalArray<P, D>
-    */
 }
 
-export function layerNorm<P extends Precision, D extends readonly number[]>(
-        activations: DimensionalArray<P, D>, 
-        gain: DimensionalArray<P, readonly [Last<D>]>, 
-        bias: DimensionalArray<P, readonly [Last<D>]>): DimensionalArray<P, D> {
+export function layerNorm<D extends readonly Dim[]>(
+        activations: Tensor<D>, 
+        gain: Tensor<readonly [Last<D>]>, 
+        bias: Tensor<readonly [Last<D>]>): Tensor<D> {
     let out = {
         ...activations,
-        data: activations.precision === 'int8' ? 
-            Int8Array.from(activations.data) :
-            Float32Array.from(activations.data)
-    } as DimensionalArray<P, D>
+        data: Float32Array.from(activations.data)
+    } as Tensor<D>
 
     const lastStride = activations.shape[activations.shape.length - 1];
     const elementCount = activations.data.length / lastStride;
     for (let i = 0; i < elementCount; i++) {
-        const layer = activations.precision === 'int8' ? 
-            new Int8Array(out.data.buffer, i * lastStride, lastStride) : 
-            new Float32Array(out.data.buffer, 4 * i * lastStride, lastStride);
-    
+        const layer = new Float32Array(out.data.buffer, 4 * i * lastStride, lastStride);
         const eps = 1e-5;
         const mean = (layer as any).reduce((a: number, b: number) => a + b, 0) / layer.length;
         const variance = (layer.map(x => Math.pow(x - mean, 2)) as any).reduce((a: number, b: number) => a + b, 0) / layer.length;
@@ -320,7 +259,3 @@ export function layerNorm<P extends Precision, D extends readonly number[]>(
 
     return out;
 }
-
-
-
-export type Multiply<A extends number, B extends number> = number;
