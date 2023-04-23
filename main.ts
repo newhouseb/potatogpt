@@ -29,7 +29,7 @@ function bytesToUnicode(): [{ [key: number]: string }, { [key: string]: number }
 
 function encodeString(str: string) {
   // This is a giant dict of strings that map to token IDs
-  const encoder = JSON.parse(fs.readFileSync('sm/encoder.json', 'utf8'));
+  const encoder = JSON.parse(fs.readFileSync('weights/encoder.json', 'utf8'));
 
   // A weird quirk of GPT2's tokenization is that they map control and whitespace characters up by 255 to make them printable, not entirely
   // clear why this is but perhaps so that everything can confidently be printable while debugging without things (for example) clearing your terminal
@@ -59,7 +59,7 @@ function decodeString(str: string) {
 }
 
 function decodeTokens(tokens: number[]) {
-  const encoder = JSON.parse(fs.readFileSync('sm/encoder.json', 'utf8'));
+  const encoder = JSON.parse(fs.readFileSync('weights/encoder.json', 'utf8'));
 
   const decoder = {} as { [key: number]: string };
   for (const key in encoder) {
@@ -70,9 +70,6 @@ function decodeTokens(tokens: number[]) {
 }
 
 const loadSmallGPT = async () => {
-  //const gpt = await readCompressedMsgpack<any>('gpt2sm.msgpack.zlib');
-  //const gpt = await readCompressed<any>('gpt2sm.json.zlib');
-
   const model = GPT({
     VocabularySize: 50257, 
     SequenceLength: 1024, 
@@ -212,6 +209,13 @@ function GPT<
     toReturn.set(new Float32Array(buffer.buffer, buffer.byteOffset, buffer.length / 4));
     return toReturn;
   } 
+  
+  // Git LFS kicks in at 100MB, so we split this up into two
+  const wte0 = load('weights/wte.0');
+  const wte1 = load('weights/wte.1');
+  const wte = new Float32Array(wte0.length + wte1.length);
+  wte.set(wte0, 0);
+  wte.set(wte1, wte0.length);
 
     return {
         ...params,
@@ -219,7 +223,7 @@ function GPT<
             // wpe stands for "word position embedding"
             wpe: tensor([params.SequenceLength, params.EmbeddingDimensions], load('weights/wpe') as any),
             // wte stands for "word token embedding"
-            wte: tensor([params.VocabularySize, params.EmbeddingDimensions], load('weights/wte') as any),
+            wte: tensor([params.VocabularySize, params.EmbeddingDimensions], wte as any),
             // ln_f stands for "layer normalization for the feedforward network"
             ln_f: {
                 b: tensor([params.EmbeddingDimensions], load('weights/ln_f_b') as any),
