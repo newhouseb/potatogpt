@@ -51,7 +51,7 @@ PotatoGPT uses fully type-safe tensors everywhere.
 
 ### What about training?
 
-I've written an autodifferentiating compiler in clojure years ago so I have a pretty good idea of how that end of things works. The primary point of this exercise was to prove to myself that I understand the architecture of GPTs.
+Many years ago, I wrote an autodifferentiating compiler in clojure so I have a reasonable idea of how training works. The primary point of _this_ exercise was to prove to myself that I understand the architecture of GPTs.
 
 ### How were the weights generated?
 
