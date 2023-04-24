@@ -17,7 +17,7 @@ The _novel_ part of this codebase is that it demonstrates type-safe tensor opera
 
 <img width="379" alt="Screen Shot 2023-04-23 at 6 14 01 PM" src="https://user-images.githubusercontent.com/77915/233869473-98d2e38f-a2ac-47b2-9fb9-72fb4f611708.png">
 
-In the screenshot above, I'm multiplying a 3x4 matrix with a 4x5 matrix. The typesystem concludes that the output matrix is (correctly 3x5).
+In the screenshot above, I'm multiplying a 3x4 matrix with a 4x5 matrix. The typesystem concludes that the output matrix is (correctly) 3x5.
 
 But what happens if I screw up and try to multiply two matrixes that don't share the inner dimension?
 
