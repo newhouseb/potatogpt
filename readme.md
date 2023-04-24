@@ -43,7 +43,7 @@ Many years ago, I wrote an autodifferentiating compiler in clojure so I have a r
 
 ### How were the weights generated?
 
-The weights were generated using the python notebook found in this repository. I spent a while trying to figure out if I could read the raw tensorflow checkpoints but doing so without third party libraries is tough. Tensorflow stores weights in a vaguely LevelDB-like SSTable format "for efficiency" but after reading a bunch of enterprise-grade Google C++, I decided to just write each tensor to disk in a structured format. This ended up being smaller than the "optimized" tensorflow checkpoint format and way faster to load than anything else I tried ¯\_(ツ)_/¯
+The weights were generated using the python file found in this repository (`export_weights.py`). I spent a while trying to figure out if I could read the raw tensorflow checkpoints but doing so without third party libraries is tough. Tensorflow stores weights in a vaguely LevelDB-like SSTable format "for efficiency" but after reading a bunch of enterprise-grade Google C++, I decided to just write each tensor to disk in a packed floats. This ended up being smaller than the "optimized" tensorflow checkpoint format and way faster to load than anything else I tried ¯\_(ツ)_/¯
 
 ### Can we make Tensorflow or PyTorch typesafe?
 
