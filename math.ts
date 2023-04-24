@@ -149,6 +149,8 @@ export function merge<D extends readonly Dim[], C extends number>
     return out;
 }
 
+// This returns a square matrix of size n where the upper triangle is -1e10 and the lower triangle is 0
+// This is used to mask out the future tokens in the attention related bits
 export function causalMask<N extends Dim>(n: N): Tensor<[N, N]> {
   const empty: Tensor<[N, N]> = tensor([n,n]) as any;
   for (let i = 0; i < n; i++) {

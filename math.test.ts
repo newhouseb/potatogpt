@@ -1,6 +1,5 @@
 import { Var, causalMask, gelu, getSlice, layerNorm, linear, merge, multiplyMatrix, softmax, split, tensor, transposeMatrix } from "./math"
 
-//const out = multiplyMatrix(tensor1, tensor2);
 test('Multiplication', () => {
     const left = tensor([4, 3], [
         1, 2, 3,

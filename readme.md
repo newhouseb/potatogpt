@@ -1,4 +1,4 @@
-# PotatoGPT
+# 🥔 PotatoGPT
 
 This is a reimplementation of GPT2 (small) inference from scratch with no runtime dependencies (seriously, check package.json). Implementation was designed to be an educational exercise and was heavily based off of the wonderful [picoGPT](https://github.com/jaymody/picoGPT) repository. 
 
@@ -25,7 +25,12 @@ Chosen token: [
 ]
 ```
 
-## Fully Typed Tensors
+## 🏃 How to Run
+
+1. Clone the repository (weights are included, about 500mb or so, so it may take a bit)
+2. Run `node main.js` (no `yarn install` needed unless you want to edit the code)
+
+## 🌈 Fully Typed Tensors
 
 The _novel_ part of this codebase is that it demonstrates type-safe tensor operations. Said another way: you no longer have to run your code to track and verify the shape of your tensors!
 
@@ -45,9 +50,11 @@ Another challenge is that you might have a dynamically sized tensor (i.e. based 
 
 In this example, the first dimension of tensorA is only known at runtime. But because we can tag it as `Var<'Sequence Length'>`, all future uses will typecheck just as they would above: if you tried to intermingle differently branded numbers, typescript would yell.
 
+Note that I've only implemented the bare minimum of tensor math to get GPT2 to work, representing a tiny fraction of what you would get out of something like numpy. Notably, there's nothing like broadcasting implemented.
+
 PotatoGPT uses fully type-safe tensors everywhere.
 
-## FAQ
+## 🙋 FAQ
 
 ### What about training?
 
