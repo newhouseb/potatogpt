@@ -1,4 +1,4 @@
-import { causalMask, gelu, getSlice, layerNorm, linear, merge, multiplyMatrix, softmax, split, tensor, transposeMatrix } from "./math"
+import { Var, causalMask, gelu, getSlice, layerNorm, linear, merge, multiplyMatrix, softmax, split, tensor, transposeMatrix } from "./math"
 
 //const out = multiplyMatrix(tensor1, tensor2);
 test('Multiplication', () => {
@@ -155,6 +155,16 @@ test("Slicing", () => {
     ])
 
 })
+
+const seq = [];
+
+const a = Var(seq.length, 'Sequence Length');
+
+const tensorA = tensor([a, 4]);
+const tensorB = tensor([4, 5]);
+
+
+const tensorC = multiplyMatrix(tensorA, tensorB);
 
 const tensor1 = tensor([3, 2]);
 const tensor2 = tensor([4, 5]);

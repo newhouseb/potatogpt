@@ -78,14 +78,6 @@ export const transposeMatrix = <X extends number, Y extends number>
     return output;
 }; 
 
-export const unsqueeze = <D extends readonly Dim[]>
-        (a: Tensor<D>): Tensor<PushHead<D, 1>> => {
-    return {
-        data: a.data,
-        shape: [1, ...a.shape] as any
-    } as any;
-}
-
 export function mapInPlace<D extends readonly Dim[]>(a: Tensor<D>, fn: (n: number) => number): Tensor<D> {
     a.data.set(a.data.map(i => fn(i)))
     return a;

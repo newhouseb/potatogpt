@@ -1,105 +1,33 @@
-import { Var, addMatrix, causalMask, copy, gelu, getSlice, layerNorm, linear, mapInPlace, merge, multiplyMatrix, softmax, split, tensor, transposeMatrix, unsqueeze } from "./math";
+import { Var, addMatrix, causalMask, copy, gelu, getSlice, layerNorm, linear, mapInPlace, merge, multiplyMatrix, softmax, split, tensor, transposeMatrix } from "./math";
 import * as fs from 'fs';
 import type { Tensor } from "./math";
-
-function bytesToUnicode(): [{ [key: number]: string }, { [key: string]: number }] {
-  const bs: number[] = [
-      ...Array.from({ length: '~'.charCodeAt(0) - '!'.charCodeAt(0) + 1 }, (_, i) => '!'.charCodeAt(0) + i),
-      ...Array.from({ length: '¬'.charCodeAt(0) - '¡'.charCodeAt(0) + 1 }, (_, i) => '¡'.charCodeAt(0) + i),
-      ...Array.from({ length: 'ÿ'.charCodeAt(0) - '®'.charCodeAt(0) + 1 }, (_, i) => '®'.charCodeAt(0) + i),
-  ];
-  const cs: number[] = [...bs];
-  let n = 0;
-  for (let b = 0; b < 2 ** 8; b++) {
-      if (!bs.includes(b)) {
-          bs.push(b);
-          cs.push(2 ** 8 + n);
-          n += 1;
-      }
-  }
-  const csStr: string[] = cs.map((n) => String.fromCharCode(n));
-  const lookupTable: { [key: number]: string } = {};
-  const unlookupTable: { [key: string]: number } = {};
-  bs.forEach((key, index) => {
-      lookupTable[key] = csStr[index];
-      unlookupTable[csStr[index]] = key;
-  });
-  return [lookupTable, unlookupTable];
-}
-
-function encodeString(str: string) {
-  // This is a giant dict of strings that map to token IDs
-  const encoder = JSON.parse(fs.readFileSync('weights/encoder.json', 'utf8'));
-
-  // A weird quirk of GPT2's tokenization is that they map control and whitespace characters up by 255 to make them printable, not entirely
-  // clear why this is but perhaps so that everything can confidently be printable while debugging without things (for example) clearing your terminal
-  const [byteMapping, byteUnmapping] = bytesToUnicode();
-  str = str.split('').map((c) => byteMapping[c.charCodeAt(0)]).join('');
-
-  const tokens = Object.keys(encoder);
-  let out = [] as number[];
-
-  while (str.length) {
-    let bestToken = '';
-    for (const token of tokens) {
-      if (str.startsWith(token) && token.length > bestToken.length) {
-        bestToken = token;
-      }
-    }
-    out.push(encoder[bestToken])
-    str = str.slice(bestToken.length);
-  }
-
-  return out;
-}
-
-function decodeString(str: string) {
-  const [byteMapping, byteUnmapping] = bytesToUnicode();
-  return str.split('').map((c) => String.fromCharCode(byteUnmapping[c])).join('');
-}
-
-function decodeTokens(tokens: number[]) {
-  const encoder = JSON.parse(fs.readFileSync('weights/encoder.json', 'utf8'));
-
-  const decoder = {} as { [key: number]: string };
-  for (const key in encoder) {
-    decoder[encoder[key]] = key;
-  }
-
-  return decodeString(tokens.map((token) => decoder[token]).join(''));
-}
-
-const loadSmallGPT = async () => {
-  const model = GPT({
-    VocabularySize: 50257, 
-    SequenceLength: 1024, 
-    EmbeddingDimensions: 768, 
-    AttentionHeads: 12, 
-    Layers: 12
-  }, null)
-  
-  return model;
-}
-
-type Multiply<A extends number, B extends number> = number & { label: `${A} * ${B}` }
-const Multiply = <A extends number, B extends number>(a: A, b: B) => a * b as Multiply<A, B>;
-type Divide<A extends number, B extends number> = number & { label: `${A} / ${B}` }
-const Divide = <A extends number, B extends number>(a: A, b: B) => a / b as Divide<A, B>;
+import { createInterface } from 'readline';
+import { stdin as input, stdout as output } from 'process';
 
 async function main() {
-  let prompt = 'peanut butter and';
+  // Read prompt from stdin 
+  const rl = createInterface({ input, output });
+  let prompt = await new Promise<string>((resolve) => {
+    rl.question('Please enter a prompt: ', (input: string) => {
+      resolve(input);
+      rl.close();
+    });
+  });
+
+  // Map the prompt to tokens
   let tokens = encodeString(prompt)
 
-  console.log('loading gpt')
+  console.time('Loading Model')
   const gpt = await loadSmallGPT();
-  console.log('done')
+  console.timeEnd('Loading Model')
 
+  // Generate (up to) 100 tokens
   let toGenerate = 100;
-
   while (toGenerate > 0) {
-    let x = tensor([Var(tokens.length, 'Sequence Length'), gpt.EmbeddingDimensions])
+    const start = (new Date()).getTime();
 
     // Map each token into an embedding + position vector
+    let x = tensor([Var(tokens.length, 'Sequence Length'), gpt.EmbeddingDimensions])
     tokens.map((token, i) => {
       const slice = getSlice(x, i)
       const embedding = getSlice(gpt.weights.wte, token);
@@ -114,6 +42,7 @@ async function main() {
       i += 1
       process.stdout.write('\rBlock ' + i + ' of ' + gpt.weights.blocks.length);
 
+      // The start of a block kicks off with a layer normalization
       const nx1 = layerNorm(x, block.ln_1.g, block.ln_1.b)
 
       // We weight the inputs to self attention 
@@ -133,16 +62,13 @@ async function main() {
       const sqrtD = Math.sqrt(gpt.EmbeddingDimensions / gpt.AttentionHeads);
       const mask = causalMask(kHeads[0].shape[0]);
       for (let h = 0; h < gpt.AttentionHeads; h++) {
-        const inner = addMatrix(
+        aHeads.push(multiplyMatrix(
+          softmax(addMatrix(
               mapInPlace(
                 multiplyMatrix(qHeads[h], transposeMatrix(kHeads[h])), 
                 (n) => n / sqrtD), 
-              mask);
-        const smax = softmax(inner);
-        const outer = multiplyMatrix(
-          smax, 
-          vHeads[h]);
-        aHeads.push(outer);
+              mask)), 
+          vHeads[h]));
       }
 
       // Next merge the heads all back together
@@ -165,9 +91,8 @@ async function main() {
     const transposed = transposeMatrix(gpt.weights.wte)
     const final = multiplyMatrix(x, transposed);
 
+    // Greedily choose the highest logit and use that as our next token
     let logits = getSlice(final, final.shape[0] - 1);
-
-    // argmax over the logits
     let bestToken = 0;
     let bestScore = -Infinity;
     for (let j = 0; j < logits.data.length; j++) {
@@ -177,7 +102,9 @@ async function main() {
       }
     }
 
-    console.log('\nChosen token:', [prompt, decodeTokens([bestToken])]);
+    // Log the chosen token and prepare to loop again
+    const duration = ((new Date()).getTime() - start) / 1000;
+    console.log(`\nChose token in ${duration.toFixed(2)}s:`, [prompt, decodeTokens([bestToken])]);
     prompt += '' + decodeTokens([bestToken]);
     tokens.push(bestToken);
 
@@ -185,6 +112,23 @@ async function main() {
   }
 }
 main();
+
+const loadSmallGPT = async () => {
+  const model = GPT({
+    VocabularySize: 50257, 
+    SequenceLength: 1024, 
+    EmbeddingDimensions: 768, 
+    AttentionHeads: 12, 
+    Layers: 12
+  }, null)
+  
+  return model;
+}
+
+type Multiply<A extends number, B extends number> = number & { label: `${A} * ${B}` }
+const Multiply = <A extends number, B extends number>(a: A, b: B) => a * b as Multiply<A, B>;
+type Divide<A extends number, B extends number> = number & { label: `${A} / ${B}` }
+const Divide = <A extends number, B extends number>(a: A, b: B) => a / b as Divide<A, B>;
 
 function GPT<
     SequenceLength extends number, 
@@ -270,4 +214,71 @@ function GPT<
             })
         )}
     }
+}
+
+function bytesToUnicode(): [{ [key: number]: string }, { [key: string]: number }] {
+  const bs: number[] = [
+      ...Array.from({ length: '~'.charCodeAt(0) - '!'.charCodeAt(0) + 1 }, (_, i) => '!'.charCodeAt(0) + i),
+      ...Array.from({ length: '¬'.charCodeAt(0) - '¡'.charCodeAt(0) + 1 }, (_, i) => '¡'.charCodeAt(0) + i),
+      ...Array.from({ length: 'ÿ'.charCodeAt(0) - '®'.charCodeAt(0) + 1 }, (_, i) => '®'.charCodeAt(0) + i),
+  ];
+  const cs: number[] = [...bs];
+  let n = 0;
+  for (let b = 0; b < 2 ** 8; b++) {
+      if (!bs.includes(b)) {
+          bs.push(b);
+          cs.push(2 ** 8 + n);
+          n += 1;
+      }
+  }
+  const csStr: string[] = cs.map((n) => String.fromCharCode(n));
+  const lookupTable: { [key: number]: string } = {};
+  const unlookupTable: { [key: string]: number } = {};
+  bs.forEach((key, index) => {
+      lookupTable[key] = csStr[index];
+      unlookupTable[csStr[index]] = key;
+  });
+  return [lookupTable, unlookupTable];
+}
+
+function encodeString(str: string) {
+  // This is a giant dict of strings that map to token IDs
+  const encoder = JSON.parse(fs.readFileSync('weights/encoder.json', 'utf8'));
+
+  // A weird quirk of GPT2's tokenization is that they map control and whitespace characters up by 255 to make them printable, not entirely
+  // clear why this is but perhaps so that everything can confidently be printable while debugging without things (for example) clearing your terminal
+  const [byteMapping, _] = bytesToUnicode();
+  str = str.split('').map((c) => byteMapping[c.charCodeAt(0)]).join('');
+
+  const tokens = Object.keys(encoder);
+  let out = [] as number[];
+
+  while (str.length) {
+    let bestToken = '';
+    for (const token of tokens) {
+      if (str.startsWith(token) && token.length > bestToken.length) {
+        bestToken = token;
+      }
+    }
+    out.push(encoder[bestToken])
+    str = str.slice(bestToken.length);
+  }
+
+  return out;
+}
+
+function decodeString(str: string) {
+  const [_, byteUnmapping] = bytesToUnicode();
+  return str.split('').map((c) => String.fromCharCode(byteUnmapping[c])).join('');
+}
+
+function decodeTokens(tokens: number[]) {
+  const encoder = JSON.parse(fs.readFileSync('weights/encoder.json', 'utf8'));
+
+  const decoder = {} as { [key: number]: string };
+  for (const key in encoder) {
+    decoder[encoder[key]] = key;
+  }
+
+  return decodeString(tokens.map((token) => decoder[token]).join(''));
 }
