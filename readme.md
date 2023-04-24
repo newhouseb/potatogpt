@@ -2,28 +2,9 @@
 
 This is a reimplementation of GPT2 (small) inference from scratch with no runtime dependencies (seriously, check package.json). Implementation was designed to be an educational exercise and was heavily based off of the wonderful [picoGPT](https://github.com/jaymody/picoGPT) repository. 
 
-Because there are no accelerated math libraries under the hood (read: there's no javascript equivalent of numpy), this implementation is potato-slow: on the order of a couple tokens per minute on a Macbook Air M2.
+Because there are no accelerated math libraries under the hood (read: there's no javascript equivalent of numpy), this implementation is potato-slow: on the order of a few tokens per minute on a Macbook Air M2 (depending on prompt length).
 
-```
-(base) ben@Bens-MacBook-Air transformers % yarn start
-yarn run v1.22.19
-warning package.json: No license field
-$ ts-node main.ts
-loading gpt
-done
-Block done                     
-Chosen token: [ 'peanut butter and', ' jelly' ]
-
-...
-
-Block done                     
-Chosen token: [
-  'peanut butter and jelly.\n' +
-    '\n' +
-    "I'm not sure if I'm going to be able to get this recipe to work for me, but I'm going to try it",
-  '.'
-]
-```
+![Screen Shot 2023-04-23 at 10 38 55 PM](https://user-images.githubusercontent.com/77915/233888362-a1fb784e-ae6b-43a3-9c8f-0bbebc605cc8.png)
 
 ## 🏃 How to Run
 
