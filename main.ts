@@ -245,7 +245,7 @@ function encodeString(str: string) {
   // This is a giant dict of strings that map to token IDs
   const encoder = JSON.parse(fs.readFileSync('weights/encoder.json', 'utf8'));
 
-  // A weird quirk of GPT2's tokenization is that they map control and whitespace characters up by 255 to make them printable, not entirely
+  // A weird quirk of GPT2's tokenization is that they map control and whitespace characters up by 256 to make them printable, not entirely
   // clear why this is but perhaps so that everything can confidently be printable while debugging without things (for example) clearing your terminal
   const [byteMapping, _] = bytesToUnicode();
   str = str.split('').map((c) => byteMapping[c.charCodeAt(0)]).join('');
